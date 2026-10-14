@@ -1,0 +1,152 @@
+diff --git a/SConscript.gtk b/SConscript.gtk
+index ad23888..fd2e864 100644
+--- a/SConscript.gtk
++++ b/SConscript.gtk
+@@ -3,7 +3,6 @@ Import('env')
+ root_env = env.Clone()
+ root_env.Append(LIBS=["GL", "GLU"])
+ root_env.ParseConfig('sdl-config --cflags --libs')
+-root_env.ParseConfig('pkg-config --cflags --libs gtk+-2.0')
+ 
+ root_env.Append(
+   CXXFLAGS = [
+diff --git a/src/platforms/gtk/gtk_rlvm_instance.cc b/src/platforms/gtk/gtk_rlvm_instance.cc
+index c1eb510..ea74dc7 100644
+--- a/src/platforms/gtk/gtk_rlvm_instance.cc
++++ b/src/platforms/gtk/gtk_rlvm_instance.cc
+@@ -26,121 +26,38 @@
+ 
+ #include "platforms/gtk/gtk_rlvm_instance.h"
+ 
+-#include <gtk/gtk.h>
+-#include <libintl.h>
++#include <iostream>
+ #include <string>
+ 
+ #include "utilities/file.h"
+-#include "utilities/gettext.h"
+ 
+ namespace fs = boost::filesystem;
+ 
+-namespace {
+-
+-void on_selection_changed(GtkFileChooser* chooser) {
+-  gchar* name = gtk_file_chooser_get_filename(chooser);
+-  if (name) {
+-    boost::filesystem::path path =
+-        CorrectPathCase(fs::path(name) / fs::path("Gameexe.ini"));
+-    gtk_dialog_set_response_sensitive(
+-        GTK_DIALOG(chooser), GTK_RESPONSE_ACCEPT, fs::exists(path));
+-    g_free(name);
+-  }
+-}
+-
+-}  // namespace
+-
+-GtkRLVMInstance::GtkRLVMInstance(int* argc, char** argv[]) : RLVMInstance() {
+-#if defined ENABLE_NLS
+-  gtk_set_locale();
+-#endif
+-  gtk_init(argc, argv);
+-
+-#if defined ENABLE_NLS
+-  setlocale(LC_ALL, "");
+-  bindtextdomain("rlvm", "/usr/share/locale");
+-  textdomain("rlvm");
+-#endif
+-}
++// Headless stand-in for the GTK dialogs: handheld ArkOS devices have no X
++// server, so errors go to stderr and the game directory must be passed on the
++// command line.
++GtkRLVMInstance::GtkRLVMInstance(int* argc, char** argv[]) : RLVMInstance() {}
+ 
+ GtkRLVMInstance::~GtkRLVMInstance() {}
+ 
+-boost::filesystem::path GtkRLVMInstance::SelectGameDirectory() {
+-  GtkWidget* dialog = gtk_file_chooser_dialog_new(_("Select Game Directory"),
+-                                                  NULL,
+-                                                  GTK_FILE_CHOOSER_ACTION_OPEN,
+-                                                  GTK_STOCK_CANCEL,
+-                                                  GTK_RESPONSE_CANCEL,
+-                                                  GTK_STOCK_OPEN,
+-                                                  GTK_RESPONSE_ACCEPT,
+-                                                  NULL);
+-
+-  gtk_file_chooser_set_action(GTK_FILE_CHOOSER(dialog),
+-                              GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER);
+-  gtk_file_chooser_set_create_folders(GTK_FILE_CHOOSER(dialog), false);
+-  g_signal_connect(
+-      dialog, "selection-changed", G_CALLBACK(on_selection_changed), NULL);
+-
+-  boost::filesystem::path out_path;
+-  if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
+-    char* filename = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
+-    out_path = filename;
+-    g_free(filename);
+-  }
+-  gtk_widget_hide(dialog);
+-  gtk_widget_destroy(dialog);
+-
+-  // Actually execute the destruction signals.
+-  DoNativeWork();
+-
+-  return out_path;
++fs::path GtkRLVMInstance::SelectGameDirectory() {
++  std::cerr << "No game directory given on the command line." << std::endl;
++  return fs::path();
+ }
+ 
+-void GtkRLVMInstance::DoNativeWork() {
+-  while (gtk_events_pending())
+-    gtk_main_iteration();
+-}
++void GtkRLVMInstance::DoNativeWork() {}
+ 
+ void GtkRLVMInstance::ReportFatalError(const std::string& message_text,
+                                        const std::string& informative_text) {
+-  RLVMInstance::ReportFatalError(message_text, informative_text);
+-
+-  GtkWidget* message = gtk_message_dialog_new(NULL,
+-                                              GTK_DIALOG_MODAL,
+-                                              GTK_MESSAGE_ERROR,
+-                                              GTK_BUTTONS_CLOSE,
+-                                              "%s",
+-                                              message_text.c_str());
+-  gtk_message_dialog_format_secondary_text(
+-      GTK_MESSAGE_DIALOG(message), "%s", informative_text.c_str());
+-
+-  gtk_dialog_run(GTK_DIALOG(message));
+-  gtk_widget_destroy(message);
+-
+-  DoNativeWork();
++  std::cerr << "rlvm fatal error: " << message_text << ": " << informative_text
++            << std::endl;
+ }
+ 
+ bool GtkRLVMInstance::AskUserPrompt(const std::string& message_text,
+                                     const std::string& informative_text,
+                                     const std::string& true_button,
+                                     const std::string& false_button) {
+-  GtkWidget* message = gtk_message_dialog_new(NULL,
+-                                              GTK_DIALOG_MODAL,
+-                                              GTK_MESSAGE_WARNING,
+-                                              GTK_BUTTONS_NONE,
+-                                              "%s",
+-                                              message_text.c_str());
+-  gtk_message_dialog_format_secondary_text(
+-      GTK_MESSAGE_DIALOG(message), "%s", informative_text.c_str());
+-
+-  gtk_dialog_add_button(GTK_DIALOG(message), false_button.c_str(), 0);
+-  gtk_dialog_add_button(GTK_DIALOG(message), true_button.c_str(), 1);
+-  gtk_dialog_set_default_response(GTK_DIALOG(message), 1);
+-
+-  gint result = gtk_dialog_run(GTK_DIALOG(message));
+-  gtk_widget_destroy(message);
+-
+-  DoNativeWork();
+-
+-  return result;
++  std::cerr << "rlvm: " << message_text << ": " << informative_text
++            << " (assuming '" << true_button << "')" << std::endl;
++  return true;
+ }
