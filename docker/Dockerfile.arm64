@@ -9,6 +9,8 @@ RUN sed -i 's|http://ports.ubuntu.com/ubuntu-ports|http://old-releases.ubuntu.co
     libboost-dev libboost-filesystem-dev libboost-serialization-dev libboost-date-time-dev \
     libboost-iostreams-dev libboost-program-options-dev libboost-thread-dev libboost-system-dev libboost-locale-dev \
     libguichan-dev libzita-resampler-dev libvorbis-dev libogg-dev libsamplerate0-dev libmad0-dev libopenal-dev libsndfile1-dev \
-    python3-pip libsdl2-dev libgbm-dev libdrm-dev libegl1-mesa-dev libgles2-mesa-dev libx11-dev \
+    curl libsdl2-dev libgbm-dev libdrm-dev libegl1-mesa-dev libgles2-mesa-dev libx11-dev \
  && rm -rf /var/lib/apt/lists/*
-RUN pip3 install 'cmake<4' && cmake --version | head -1
+# eoan's cmake (3.13) is too old for sdl12-compat; use Kitware's prebuilt aarch64 build.
+RUN curl -fsSL https://github.com/Kitware/CMake/releases/download/v3.27.9/cmake-3.27.9-linux-aarch64.tar.gz | tar -xz -C /opt \
+ && ln -sf /opt/cmake-3.27.9-linux-aarch64/bin/* /usr/local/bin/ && cmake --version | head -1
