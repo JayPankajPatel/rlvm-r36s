@@ -1,0 +1,24 @@
+diff --git a/src/modules/module_sys_save.cc b/src/modules/module_sys_save.cc
+index 6d62fc8..913b959 100644
+--- a/src/modules/module_sys_save.cc
++++ b/src/modules/module_sys_save.cc
+@@ -28,7 +28,6 @@
+ #include "modules/module_sys_save.h"
+ 
+ #include <boost/algorithm/string/predicate.hpp>
+-#include <boost/filesystem/directory.hpp>
+ #include <boost/filesystem/fstream.hpp>
+ #include <boost/filesystem/operations.hpp>
+ #include <boost/filesystem/path.hpp>
+diff --git a/src/systems/base/system.cc b/src/systems/base/system.cc
+index f884f3b..b7196d7 100644
+--- a/src/systems/base/system.cc
++++ b/src/systems/base/system.cc
+@@ -28,7 +28,6 @@
+ #include "systems/base/system.h"
+ 
+ #include <boost/algorithm/string.hpp>
+-#include <boost/filesystem/directory.hpp>
+ #include <boost/filesystem/operations.hpp>
+ #include <boost/filesystem/path.hpp>
+ 

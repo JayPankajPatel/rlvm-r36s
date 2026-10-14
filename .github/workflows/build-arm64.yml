@@ -1,0 +1,25 @@
+name: build-arm64
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch upstream rlvm at the tested commit and patch it
+        run: |
+          git clone https://github.com/eglaysher/rlvm.git rlvm-src
+          git -C rlvm-src checkout e38cda7783dc67539ce27901596ed93a2bb5c826
+          for p in patches/*.patch; do git -C rlvm-src apply "$GITHUB_WORKSPACE/$p"; done
+      - name: Build image
+        run: docker build -f docker/Dockerfile.arm64 -t rlvm-arm64 docker
+      - name: Build rlvm
+        run: |
+          mkdir -p dist
+          docker run --rm -v "$PWD":/w rlvm-arm64 sh -c 'cp -r /w/rlvm-src /tmp/src && /w/scripts/build.sh /tmp/src /w/dist'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rlvm-arm64
+          path: dist
