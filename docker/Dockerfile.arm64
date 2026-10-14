@@ -9,5 +9,6 @@ RUN sed -i 's|http://ports.ubuntu.com/ubuntu-ports|http://old-releases.ubuntu.co
     libboost-dev libboost-filesystem-dev libboost-serialization-dev libboost-date-time-dev \
     libboost-iostreams-dev libboost-program-options-dev libboost-thread-dev libboost-system-dev libboost-locale-dev \
     libguichan-dev libzita-resampler-dev libvorbis-dev libogg-dev libsamplerate0-dev libmad0-dev libopenal-dev libsndfile1-dev \
-    cmake libsdl2-dev libgbm-dev libdrm-dev libegl1-mesa-dev libgles2-mesa-dev libx11-dev \
+    python3-pip libsdl2-dev libgbm-dev libdrm-dev libegl1-mesa-dev libgles2-mesa-dev libx11-dev \
  && rm -rf /var/lib/apt/lists/*
+RUN pip3 install 'cmake<4' && cmake --version | head -1
