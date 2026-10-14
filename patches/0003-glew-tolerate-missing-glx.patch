@@ -1,0 +1,22 @@
+diff --git a/src/systems/sdl/sdl_graphics_system.cc b/src/systems/sdl/sdl_graphics_system.cc
+index 19598e4..34818de 100644
+--- a/src/systems/sdl/sdl_graphics_system.cc
++++ b/src/systems/sdl/sdl_graphics_system.cc
+@@ -312,6 +312,17 @@ void SDLGraphicsSystem::SetupVideo() {
+ 
+   // Initialize glew
+   GLenum err = glewInit();
++  // On handhelds there is no X11/GLX (GL comes from gl4es over KMS/DRM). GLEW
++  // loads the core GL entry points first and only then fails its GLX check,
++  // and rlvm never uses GLX, so tolerate exactly those errors.
++#ifdef GLEW_ERROR_NO_GLX_DISPLAY
++  if (err == GLEW_ERROR_NO_GLX_DISPLAY)
++    err = GLEW_OK;
++#endif
++#ifdef GLEW_ERROR_GLX_VERSION_11_ONLY
++  if (err == GLEW_ERROR_GLX_VERSION_11_ONLY)
++    err = GLEW_OK;
++#endif
+   if (GLEW_OK != err) {
+     std::ostringstream oss;
+     oss << "Failed to initialize GLEW: " << glewGetErrorString(err);
