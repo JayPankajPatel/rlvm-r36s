@@ -20,3 +20,7 @@ l2 = mouse_slow
 # wide dead zone: earlier the stick drifted the pointer into a corner
 deadzone_mode = scaled_radial
 deadzone = 9000
+# pointer speed at full stick (pixels per tick); raise for faster, lower for slower
+deadzone_scale = 4
+# hold L2 to slow the pointer to this percent
+mouse_slow_scale = 40
