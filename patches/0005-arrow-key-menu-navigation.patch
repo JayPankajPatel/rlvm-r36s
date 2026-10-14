@@ -219,10 +219,10 @@ index 49b8294..c03269d 100644
    // Overridden from Renderable:
    virtual void Render(std::ostream* tree) override;
 diff --git a/src/long_operations/wait_long_operation.cc b/src/long_operations/wait_long_operation.cc
-index 8c884e4..54bf141 100644
+index 8c884e4..ed80719 100644
 --- a/src/long_operations/wait_long_operation.cc
 +++ b/src/long_operations/wait_long_operation.cc
-@@ -26,10 +26,17 @@
+@@ -26,10 +26,18 @@
  
  #include "long_operations/wait_long_operation.h"
  
@@ -235,12 +235,13 @@ index 8c884e4..54bf141 100644
  #include "systems/base/event_listener.h"
  #include "systems/base/event_system.h"
 +#include "systems/base/graphics_object.h"
++#include "systems/base/graphics_object_of_file.h"
  #include "systems/base/graphics_system.h"
 +#include "systems/base/parent_graphics_object_data.h"
  #include "systems/base/rect.h"
  #include "systems/base/system.h"
  #include "systems/base/text_system.h"
-@@ -93,6 +100,58 @@ bool WaitLongOperation::MouseButtonStateChanged(MouseButton mouseButton,
+@@ -93,6 +101,63 @@ bool WaitLongOperation::MouseButtonStateChanged(MouseButton mouseButton,
    return false;
  }
  
@@ -252,7 +253,8 @@ index 8c884e4..54bf141 100644
 +  std::vector<Rect> rects;
 +  GraphicsSystem& graphics = machine.system().graphics();
 +  for (GraphicsObject& obj : graphics.GetForegroundObjects()) {
-+    if (obj.IsButton() && obj.visible() && obj.has_object_data()) {
++    if (obj.IsButton() && obj.visible() && obj.has_object_data() &&
++        !dynamic_cast<ParentGraphicsObjectData*>(&obj.GetObjectData())) {
 +      rects.push_back(obj.GetObjectData().DstRect(obj, NULL));
 +    } else if (obj.has_object_data()) {
 +      ParentGraphicsObjectData* parent =
@@ -274,6 +276,10 @@ index 8c884e4..54bf141 100644
 +    std::map<std::pair<int, int>, std::vector<Rect>> groups;
 +    for (GraphicsObject& obj : graphics.GetForegroundObjects()) {
 +      if (!obj.visible() || !obj.has_object_data())
++        continue;
++      // Only plain image objects: asking other kinds (e.g. containers) for
++      // their rectangle without a parent is not safe.
++      if (!dynamic_cast<GraphicsObjectOfFile*>(&obj.GetObjectData()))
 +        continue;
 +      Rect r = obj.GetObjectData().DstRect(obj, NULL);
 +      if (r.width() <= 0 || r.height() <= 0 || r.x() < 0 || r.y() < 0 ||
@@ -299,7 +305,7 @@ index 8c884e4..54bf141 100644
  bool WaitLongOperation::KeyStateChanged(KeyCode keyCode, bool pressed) {
    if (pressed && break_on_ctrl_pressed_ &&
        (keyCode == RLKEY_RCTRL || keyCode == RLKEY_LCTRL)) {
-@@ -100,6 +159,18 @@ bool WaitLongOperation::KeyStateChanged(KeyCode keyCode, bool pressed) {
+@@ -100,6 +165,18 @@ bool WaitLongOperation::KeyStateChanged(KeyCode keyCode, bool pressed) {
      return true;
    }
  
