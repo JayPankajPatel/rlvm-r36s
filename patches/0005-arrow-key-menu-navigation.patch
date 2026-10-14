@@ -64,37 +64,48 @@ index 0ca7b8b..a09bcf1 100644
    virtual bool operator()(RLMachine& machine);
 diff --git a/src/long_operations/keyboard_nav.h b/src/long_operations/keyboard_nav.h
 new file mode 100644
-index 0000000..5542e20
+index 0000000..27694d4
 --- /dev/null
 +++ b/src/long_operations/keyboard_nav.h
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,101 @@
 +// Arrow-key navigation for pointer-driven menus, for devices without a mouse
-+// (handhelds). Up/Left pick the previous button and Down/Right the next one,
-+// in reading order; the pointer is then moved onto it.
++// (handhelds). Each arrow key moves the pointer onto the nearest button in
++// that direction.
 +#ifndef SRC_LONG_OPERATIONS_KEYBOARD_NAV_H_
 +#define SRC_LONG_OPERATIONS_KEYBOARD_NAV_H_
 +
 +#include <algorithm>
++#include <cstdlib>
 +#include <vector>
 +
 +#include "systems/base/event_listener.h"
 +#include "systems/base/rect.h"
 +
 +// Returns true, and sets |*target| to the centre of the button to move to, if
-+// |key| is an arrow key and there is at least one button.
++// |key| is an arrow key and there is somewhere to go.
++//
++// If the pointer is not on any button, the first button in reading order is
++// picked whatever the key. Otherwise the nearest button in the key's
++// direction wins, weighting sideways offset more than distance; at the edge
++// of the menu it wraps around to the far side of the same row or column.
 +inline bool PickMenuTarget(KeyCode key,
 +                           std::vector<Rect> rects,
 +                           const Point& cursor,
 +                           Point* target) {
-+  int dir;
++  // Unit step along the key's direction.
++  int dx = 0, dy = 0;
 +  switch (key) {
 +    case RLKEY_DOWN:
-+    case RLKEY_RIGHT:
-+      dir = 1;
++      dy = 1;
 +      break;
 +    case RLKEY_UP:
++      dy = -1;
++      break;
++    case RLKEY_RIGHT:
++      dx = 1;
++      break;
 +    case RLKEY_LEFT:
-+      dir = -1;
++      dx = -1;
 +      break;
 +    default:
 +      return false;
@@ -105,7 +116,12 @@ index 0000000..5542e20
 +  std::sort(rects.begin(), rects.end(), [](const Rect& a, const Rect& b) {
 +    return a.y() != b.y() ? a.y() < b.y() : a.x() < b.x();
 +  });
-+  int n = static_cast<int>(rects.size());
++  const int n = static_cast<int>(rects.size());
++  auto centre = [&](int i) {
++    return Point(rects[i].x() + rects[i].width() / 2,
++                 rects[i].y() + rects[i].height() / 2);
++  };
++
 +  int current = -1;
 +  for (int i = 0; i < n; ++i) {
 +    if (rects[i].Contains(cursor)) {
@@ -113,9 +129,42 @@ index 0000000..5542e20
 +      break;
 +    }
 +  }
-+  int next = current < 0 ? (dir > 0 ? 0 : n - 1) : (current + dir + n) % n;
-+  const Rect& r = rects[next];
-+  *target = Point(r.x() + r.width() / 2, r.y() + r.height() / 2);
++
++  int next = 0;
++  if (current >= 0) {
++    const Point from = centre(current);
++    int best_score = 0;
++    int best = -1;
++    int wrap_score = 0;
++    int wrap = -1;
++    for (int i = 0; i < n; ++i) {
++      if (i == current)
++        continue;
++      const Point to = centre(i);
++      const int along = (to.x() - from.x()) * dx + (to.y() - from.y()) * dy;
++      const int across = std::abs((to.x() - from.x()) * dy) +
++                         std::abs((to.y() - from.y()) * dx);
++      if (along > 0) {
++        const int score = along + 2 * across;
++        if (best < 0 || score < best_score) {
++          best = i;
++          best_score = score;
++        }
++      } else if (along < 0) {
++        // Candidate for wrapping: same row/column first, then the farthest.
++        const int score = 4 * across - (-along);
++        if (wrap < 0 || score < wrap_score) {
++          wrap = i;
++          wrap_score = score;
++        }
++      }
++    }
++    next = best >= 0 ? best : wrap;
++    if (next < 0)
++      return false;  // nowhere to go (e.g. Left/Right in a single column)
++  }
++
++  *target = centre(next);
 +  return true;
 +}
 +
@@ -219,7 +268,7 @@ index 49b8294..c03269d 100644
    // Overridden from Renderable:
    virtual void Render(std::ostream* tree) override;
 diff --git a/src/long_operations/wait_long_operation.cc b/src/long_operations/wait_long_operation.cc
-index 8c884e4..ed80719 100644
+index 8c884e4..e5aafbe 100644
 --- a/src/long_operations/wait_long_operation.cc
 +++ b/src/long_operations/wait_long_operation.cc
 @@ -26,10 +26,18 @@
@@ -241,7 +290,7 @@ index 8c884e4..ed80719 100644
  #include "systems/base/rect.h"
  #include "systems/base/system.h"
  #include "systems/base/text_system.h"
-@@ -93,6 +101,63 @@ bool WaitLongOperation::MouseButtonStateChanged(MouseButton mouseButton,
+@@ -93,6 +101,111 @@ bool WaitLongOperation::MouseButtonStateChanged(MouseButton mouseButton,
    return false;
  }
  
@@ -273,26 +322,74 @@ index 8c884e4..ed80719 100644
 +    // script hit-tests itself. Treat the largest group of three or more
 +    // visible, identically sized, smallish objects as the menu entries.
 +    Size screen = graphics.screen_size();
-+    std::map<std::pair<int, int>, std::vector<Rect>> groups;
-+    for (GraphicsObject& obj : graphics.GetForegroundObjects()) {
++    const int screen_area = screen.width() * screen.height();
++
++    // Only plain image objects are measured: asking other kinds (e.g.
++    // containers) for their rectangle without a parent is not safe.
++    auto measure = [&](GraphicsObject& obj, GraphicsObject* parent,
++                       Rect* out) -> bool {
 +      if (!obj.visible() || !obj.has_object_data())
-+        continue;
-+      // Only plain image objects: asking other kinds (e.g. containers) for
-+      // their rectangle without a parent is not safe.
++        return false;
 +      if (!dynamic_cast<GraphicsObjectOfFile*>(&obj.GetObjectData()))
-+        continue;
-+      Rect r = obj.GetObjectData().DstRect(obj, NULL);
-+      if (r.width() <= 0 || r.height() <= 0 || r.x() < 0 || r.y() < 0 ||
-+          r.x2() > screen.width() || r.y2() > screen.height())
-+        continue;
-+      if (r.width() * r.height() > screen.width() * screen.height() / 8)
-+        continue;
-+      groups[std::make_pair(r.width(), r.height())].push_back(r);
++        return false;
++      *out = obj.GetObjectData().DstRect(obj, parent);
++      return out->width() > 0 && out->height() > 0;
++    };
++
++    // Menus that were drawn earlier stay in the object list underneath later
++    // screens (e.g. the title menu under the Load screen). A visible
++    // full-screen object hides everything before it, so only consider objects
++    // that come after the last one.
++    int cover = -1;
++    int index = 0;
++    for (GraphicsObject& obj : graphics.GetForegroundObjects()) {
++      Rect r;
++      if (measure(obj, NULL, &r) && r.width() * r.height() >= screen_area * 8 / 10)
++        cover = index;
++      index++;
 +    }
++
++    std::map<std::pair<int, int>, std::vector<Rect>> groups;
++    auto add = [&](const Rect& r) {
++      if (r.x() < 0 || r.y() < 0 || r.x2() > screen.width() ||
++          r.y2() > screen.height())
++        return;
++      if (r.width() * r.height() > screen_area / 8)
++        return;
++      groups[std::make_pair(r.width(), r.height())].push_back(r);
++    };
++
++    index = 0;
++    for (GraphicsObject& obj : graphics.GetForegroundObjects()) {
++      if (index++ <= cover)
++        continue;
++      Rect r;
++      if (measure(obj, NULL, &r)) {
++        add(r);
++      } else if (obj.visible() && obj.has_object_data()) {
++        // Screens like Load keep their entries inside a container object.
++        ParentGraphicsObjectData* parent =
++            dynamic_cast<ParentGraphicsObjectData*>(&obj.GetObjectData());
++        if (parent) {
++          for (GraphicsObject& child : parent->objects()) {
++            if (measure(child, &obj, &r))
++              add(r);
++          }
++        }
++      }
++    }
++
++    // The largest group of three or more same-sized entries is the menu;
++    // prefer the bigger entries on a tie.
 +    size_t best = 0;
++    int best_area = 0;
 +    for (const auto& group : groups) {
-+      if (group.second.size() >= 3 && group.second.size() > best) {
++      int area = group.first.first * group.first.second;
++      if (group.second.size() >= 3 &&
++          (group.second.size() > best ||
++           (group.second.size() == best && area > best_area))) {
 +        best = group.second.size();
++        best_area = area;
 +        rects = group.second;
 +      }
 +    }
@@ -305,7 +402,7 @@ index 8c884e4..ed80719 100644
  bool WaitLongOperation::KeyStateChanged(KeyCode keyCode, bool pressed) {
    if (pressed && break_on_ctrl_pressed_ &&
        (keyCode == RLKEY_RCTRL || keyCode == RLKEY_LCTRL)) {
-@@ -100,6 +165,18 @@ bool WaitLongOperation::KeyStateChanged(KeyCode keyCode, bool pressed) {
+@@ -100,6 +213,18 @@ bool WaitLongOperation::KeyStateChanged(KeyCode keyCode, bool pressed) {
      return true;
    }
  
