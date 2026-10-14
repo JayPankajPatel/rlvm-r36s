@@ -1,5 +1,5 @@
 #!/bin/bash
-# CLANNAD (Steam HD) via rlvm on ArkOS handhelds. Usage: launch.sh mouse
+# CLANNAD (Steam HD) via rlvm on ArkOS handhelds. Usage: launch.sh mouse [resume-file]
 # Logs: clannad/run.log (summary), clannad/run-game.log (rlvm/SDL/gl4es output)
 MODE=${1:-mouse}
 if [ -d "/opt/system/Tools/PortMaster/" ]; then controlfolder="/opt/system/Tools/PortMaster"
@@ -35,6 +35,10 @@ elif [ -x /opt/inttools/gptokeyb ]; then
   /opt/inttools/gptokeyb -1 "rlvm" -c "$GPTK" &
 fi
 t0=$(date +%s)
-./rlvm --font "$GAMEDIR/game/dat/migmix-1m-regular.ttf" "$GAMEDIR/game" > "$GAMEDIR/run-game.log" 2>&1
+# Optional second argument: a resume file (see tools/steam2resume.c). The game
+# starts at the saved scene, fast-forwards to the saved line, then loads the flags.
+RESUME=()
+[ -n "$2" ] && [ -f "$2" ] && RESUME=(--resume "$2") && echo "resuming from $2"
+./rlvm "${RESUME[@]}" --font "$GAMEDIR/game/dat/migmix-1m-regular.ttf" "$GAMEDIR/game" > "$GAMEDIR/run-game.log" 2>&1
 echo "rlvm ran $(( $(date +%s) - t0 ))s"
 pkill -f gptokeyb 2>/dev/null

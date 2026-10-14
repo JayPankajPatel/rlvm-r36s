@@ -1,0 +1,257 @@
+--- a/src/libreallive/scenario.cc
++++ b/src/libreallive/scenario.cc
+@@ -155,6 +155,7 @@
+     // Read element
+     it = elts_.emplace_after(it, BytecodeElement::Read(stream, end, cdat));
+     cdat.offsets[pos] = it;
++    offset_associations_[pos] = it;
+ 
+     // Keep track of the entrypoints
+     int entrypoint = (*it)->GetEntrypoint();
+@@ -179,6 +180,15 @@
+ 
+ Script::~Script() {}
+ 
++const pointer_t Script::GetElementAtOffset(size_t offset) const {
++  // First element starting after |offset|, then step back one.
++  auto it = offset_associations_.upper_bound(offset);
++  if (it == offset_associations_.begin())
++    throw Error("Offset before start of script");
++  --it;
++  return it->second;
++}
++
+ const pointer_t Script::GetEntrypoint(int entrypoint) const {
+   pointernumber::const_iterator it = entrypoint_associations_.find(entrypoint);
+   if (it == entrypoint_associations_.end())
+@@ -211,4 +221,8 @@
+   return script.GetEntrypoint(entrypoint);
+ }
+ 
++Scenario::const_iterator Scenario::FindOffset(size_t offset) const {
++  return script.GetElementAtOffset(offset);
++}
++
+ }  // namespace libreallive
+--- a/src/libreallive/scenario.h
++++ b/src/libreallive/scenario.h
+@@ -79,6 +79,9 @@
+   // Locate the entrypoint
+   const_iterator FindEntrypoint(int entrypoint) const;
+ 
++  // Locate the element containing byte |offset| of the decompressed bytecode.
++  const_iterator FindOffset(size_t offset) const;
++
+  private:
+   Header header;
+   Script script;
+--- a/src/libreallive/scenario_internals.h
++++ b/src/libreallive/scenario_internals.h
+@@ -78,6 +78,10 @@
+  public:
+   const pointer_t GetEntrypoint(int entrypoint) const;
+ 
++  // Returns the element containing byte |offset| of the decompressed
++  // bytecode (the last element starting at or before it).
++  const pointer_t GetElementAtOffset(size_t offset) const;
++
+  private:
+   friend class Scenario;
+ 
+@@ -91,6 +95,9 @@
+   // Entrypoint handeling
+   typedef std::map<int, pointer_t> pointernumber;
+   pointernumber entrypoint_associations_;
++
++  // Where each element starts in the decompressed bytecode.
++  std::map<size_t, pointer_t> offset_associations_;
+ };
+ 
+ #endif  // SRC_LIBREALLIVE_SCENARIO_INTERNALS_H_
+--- a/src/machine/rlmachine.cc
++++ b/src/machine/rlmachine.cc
+@@ -261,6 +261,16 @@
+         }
+         delayed_modifications_.clear();
+       } else {
++        if (resume_active_) {
++          const StackFrame& frame = call_stack_.back();
++          // The scene may call into other scenes on the way; only the saved
++          // scene's own instruction pointer counts.
++          if (frame.scenario == resume_scenario_ && frame.ip == resume_ip_) {
++            resume_active_ = false;
++            system().set_force_fast_forward(false);
++            LoadResumeBanks();
++          }
++        }
+         (*(call_stack_.back().ip))->RunOnMachine(*this);
+       }
+     }
+@@ -668,6 +678,30 @@
+ 
+ void RLMachine::Halt() { halted_ = true; }
+ 
++void RLMachine::LoadResumeBanks() {
++  LocalMemory& local = memory_->local();
++  int* banks[] = {local.intA, local.intB, local.intC,
++                  local.intD, local.intE, local.intF};
++  const size_t count = sizeof(banks) / sizeof(banks[0]);
++  if (resume_banks_.size() < count * SIZE_OF_MEM_BANK)
++    return;
++  for (size_t i = 0; i < count; ++i) {
++    std::copy(resume_banks_.begin() + i * SIZE_OF_MEM_BANK,
++              resume_banks_.begin() + (i + 1) * SIZE_OF_MEM_BANK,
++              banks[i]);
++  }
++}
++
++void RLMachine::SetResume(size_t offset, std::vector<int> banks) {
++  const StackFrame& frame = call_stack_.back();
++  resume_scenario_ = frame.scenario;
++  resume_ip_ = frame.scenario->FindOffset(offset);
++  resume_banks_ = std::move(banks);
++  resume_active_ = true;
++  system().set_force_fast_forward(true);
++  LoadResumeBanks();
++}
++
+ void RLMachine::SetHaltOnException(bool halt_on_exception) {
+   halt_on_exception_ = halt_on_exception;
+ }
+--- a/src/machine/rlmachine.h
++++ b/src/machine/rlmachine.h
+@@ -68,6 +68,13 @@
+   // instruction was called explicitly in the code.
+   bool halted() const { return halted_; }
+ 
++  // Resume support (for continuing a game saved elsewhere): runs the current
++  // scene in fast-forward until the instruction at byte |offset| is reached,
++  // then stops fast-forwarding and loads the six local int banks (A..F, 2000
++  // ints each, back to back) from |banks|. The banks are also loaded
++  // immediately so the replay sees the saved flags.
++  void SetResume(size_t offset, std::vector<int> banks);
++
+   void set_store_register(int new_value) { store_register_ = new_value; }
+   int store_register() const { return store_register_; }
+ 
+@@ -366,6 +373,14 @@
+   // execute more instructions)
+   bool halted_ = false;
+ 
++  void LoadResumeBanks();
++
++  // State for SetResume().
++  bool resume_active_ = false;
++  libreallive::Scenario::const_iterator resume_ip_;
++  libreallive::Scenario const* resume_scenario_ = NULL;
++  std::vector<int> resume_banks_;
++
+   // Whether we should print an error to stderr when we encounter an undefined
+   // opcode.
+   bool print_undefined_opcodes_ = false;
+--- a/src/machine/rlvm_instance.cc
++++ b/src/machine/rlvm_instance.cc
+@@ -26,8 +26,13 @@
+ 
+ #include "machine/rlvm_instance.h"
+ 
++#include <cstdint>
++#include <cstring>
++#include <fstream>
+ #include <iostream>
+ #include <string>
++#include <utility>
++#include <vector>
+ 
+ #include "libreallive/gameexe.h"
+ #include "libreallive/reallive.h"
+@@ -85,6 +90,25 @@
+     Gameexe gameexe(gameexePath);
+     gameexe("__GAMEPATH") = gamerootPath.string();
+ 
++    // A resume file names the scene to start in, and the position within it.
++    std::vector<int> resume_banks;
++    size_t resume_offset = 0;
++    if (!resume_file_.empty()) {
++      std::ifstream in(resume_file_, std::ios::binary);
++      int32_t head[3];
++      in.read(reinterpret_cast<char*>(head), sizeof(head));
++      resume_banks.resize(6 * SIZE_OF_MEM_BANK);
++      in.read(reinterpret_cast<char*>(resume_banks.data()),
++              static_cast<std::streamsize>(resume_banks.size() * sizeof(int)));
++      if (!in || memcmp(&head[0], "RSM1", 4) != 0) {
++        throw rlvm::UserPresentableError(
++            _("Could not read the resume file."),
++            _("Make a new one with steam2resume."));
++      }
++      seen_start_ = head[1];
++      resume_offset = static_cast<size_t>(head[2]);
++    }
++
+     // Possibly force starting at a different seen
+     if (seen_start_ != -1)
+       gameexe("SEEN_START") = seen_start_;
+@@ -152,6 +176,9 @@
+     if (load_save_ != -1)
+       Sys_load()(rlmachine, load_save_);
+ 
++    if (!resume_file_.empty())
++      rlmachine.SetResume(resume_offset, std::move(resume_banks));
++
+     while (!rlmachine.halted()) {
+       // Give SDL a chance to respond to events, redraw the screen,
+       // etc.
+--- a/src/machine/rlvm_instance.h
++++ b/src/machine/rlvm_instance.h
+@@ -45,6 +45,10 @@
+   void Run(const boost::filesystem::path& gamepath);
+ 
+   void set_seen_start(int in) { seen_start_ = in; }
++
++  // Continue from a "resume" file made by tools/steam2resume: starts at its
++  // scene, fast-forwards to its position, then loads its variable banks.
++  void set_resume_file(const std::string& path) { resume_file_ = path; }
+   void set_memory() { memory_ = true; }
+   void set_undefined_opcodes() { undefined_opcodes_ = true; }
+   void set_count_undefined() { count_undefined_copcodes_ = true; }
+@@ -105,6 +109,8 @@
+   // Whether we should print out the opcodes as they are running.
+   bool tracing_;
+ 
++  std::string resume_file_;
++
+   // Loads the specified save file as soon as emulation starts if not -1.
+   int load_save_;
+ 
+--- a/src/platforms/gtk/rlvm.cc
++++ b/src/platforms/gtk/rlvm.cc
+@@ -92,6 +92,8 @@
+   po::options_description debugOpts("Debugging Options");
+   debugOpts.add_options()(
+       "start-seen", po::value<int>(), "Force start at SEEN#")(
++      "resume", po::value<string>(),
++      "Continue from a resume file made by steam2resume")(
+       "dump-seen", po::value<int>(), "Dumps rlvm's internal parsing of SEEN#")(
+       "load-save", po::value<int>(), "Load a saved game on start")(
+       "memory", "Forces debug mode (Sets #MEMORY=1 in the Gameexe.ini file)")(
+@@ -195,6 +197,9 @@
+   if (vm.count("start-seen"))
+     instance.set_seen_start(vm["start-seen"].as<int>());
+ 
++  if (vm.count("resume"))
++    instance.set_resume_file(vm["resume"].as<string>());
++
+   if (vm.count("dump-seen"))
+     instance.set_dump_seen(vm["dump-seen"].as<int>());
+ 
+--- a/src/systems/base/system.h
++++ b/src/systems/base/system.h
+@@ -153,7 +153,7 @@
+   // to zoom through).
+   bool force_fast_forward() { return force_fast_forward_; }
+   // Set in lua_rlvm, to speed through the game with maximum speed!
+-  void set_force_fast_forward() { force_fast_forward_ = true; }
++  void set_force_fast_forward(bool in = true) { force_fast_forward_ = in; }
+ 
+   bool force_wait() { return force_wait_; }
+   void set_force_wait(bool in) { force_wait_ = in; }
