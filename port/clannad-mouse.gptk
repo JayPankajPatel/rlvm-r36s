@@ -1,0 +1,12 @@
+# mouse mode: D-pad moves the pointer (no analog drift). A=click, B=right click
+a = mouse_left
+b = mouse_right
+x = enter
+y = esc
+start = esc
+up = mouse_movement_up
+down = mouse_movement_down
+left = mouse_movement_left
+right = mouse_movement_right
+l1 = ctrl
+r1 = ctrl

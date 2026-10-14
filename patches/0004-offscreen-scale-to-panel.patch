@@ -1,0 +1,201 @@
+diff --git a/src/systems/sdl/sdl_event_system.cc b/src/systems/sdl/sdl_event_system.cc
+index b63ef00..d67c4dd 100644
+--- a/src/systems/sdl/sdl_event_system.cc
++++ b/src/systems/sdl/sdl_event_system.cc
+@@ -29,6 +29,8 @@
+ 
+ #include <SDL/SDL.h>
+ 
++#include <cstdio>
++#include <cstdlib>
+ #include <functional>
+ 
+ #include "machine/rlmachine.h"
+@@ -237,6 +239,19 @@ void SDLEventSystem::HandleKeyUp(RLMachine& machine, SDL_Event& event) {
+ void SDLEventSystem::HandleMouseMotion(RLMachine& machine, SDL_Event& event) {
+   if (mouse_inside_window_) {
+     mouse_pos_ = Point(event.motion.x, event.motion.y);
++    // Window smaller than the game (see RLVM_OUTPUT_SIZE): scale to game space.
++    static int out_w = -1, out_h = 0;
++    if (out_w < 0) {
++      out_w = 0;
++      const char* s = getenv("RLVM_OUTPUT_SIZE");
++      if (s && sscanf(s, "%dx%d", &out_w, &out_h) != 2)
++        out_w = out_h = 0;
++    }
++    if (out_w > 0 && out_h > 0) {
++      Size game = machine.system().graphics().screen_size();
++      mouse_pos_ = Point(event.motion.x * game.width() / out_w,
++                         event.motion.y * game.height() / out_h);
++    }
+     last_mouse_move_time_ = GetTicks();
+ 
+     // Handle this somehow.
+diff --git a/src/systems/sdl/sdl_graphics_system.cc b/src/systems/sdl/sdl_graphics_system.cc
+index 34818de..284e1fc 100644
+--- a/src/systems/sdl/sdl_graphics_system.cc
++++ b/src/systems/sdl/sdl_graphics_system.cc
+@@ -41,6 +41,7 @@
+ 
+ #include <algorithm>
+ #include <cstdio>
++#include <cstdlib>
+ #include <set>
+ #include <sstream>
+ #include <string>
+@@ -82,7 +83,64 @@ void SDLGraphicsSystem::SetCursor(int cursor) {
+   SDL_ShowCursor(ShouldUseCustomCursor() ? SDL_DISABLE : SDL_ENABLE);
+ }
+ 
++namespace {
++
++// Handhelds: the real framebuffer (panel) is smaller than the game's
++// 1280x960. When RLVM_OUTPUT_SIZE="WxH" is set, the game draws into an
++// offscreen game-sized buffer that is scaled to the window when presented, so
++// everything that reads the "screen" back (glCopyTexSubImage2D) sees a
++// full-size image. Unset => unchanged behavior.
++GLuint g_present_fbo = 0;
++GLuint g_present_tex = 0;
++int g_out_w = 0, g_out_h = 0, g_game_w = 0, g_game_h = 0;
++
++void GetOutputSize(int* w, int* h) {
++  *w = *h = 0;
++  const char* s = getenv("RLVM_OUTPUT_SIZE");
++  if (s && sscanf(s, "%dx%d", w, h) != 2)
++    *w = *h = 0;
++}
++
++void BindOffscreen() {
++  if (!g_present_fbo)
++    return;
++  glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, g_present_fbo);
++  glViewport(0, 0, g_game_w, g_game_h);
++}
++
++// Scales the offscreen buffer to the real window.
++void PresentOffscreen() {
++  if (!g_present_fbo)
++    return;
++  glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, 0);
++  glViewport(0, 0, g_out_w, g_out_h);
++  glMatrixMode(GL_PROJECTION);
++  glLoadIdentity();
++  glOrtho(0.0, 1.0, 0.0, 1.0, -1.0, 1.0);
++  glMatrixMode(GL_MODELVIEW);
++  glLoadIdentity();
++  glDisable(GL_BLEND);
++  glDisable(GL_DEPTH_TEST);
++  glEnable(GL_TEXTURE_2D);
++  glBindTexture(GL_TEXTURE_2D, g_present_tex);
++  glColor4ub(255, 255, 255, 255);
++  glBegin(GL_QUADS);
++  glTexCoord2f(0, 0);
++  glVertex2f(0, 0);
++  glTexCoord2f(1, 0);
++  glVertex2f(1, 0);
++  glTexCoord2f(1, 1);
++  glVertex2f(1, 1);
++  glTexCoord2f(0, 1);
++  glVertex2f(0, 1);
++  glEnd();
++  glEnable(GL_BLEND);
++}
++
++}  // namespace
++
+ void SDLGraphicsSystem::BeginFrame() {
++  BindOffscreen();
+   glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+   DebugShowGLErrors();
+@@ -148,8 +206,10 @@ void SDLGraphicsSystem::EndFrame() {
+   DrawCursor();
+ 
+   // Swap the buffers
++  PresentOffscreen();
+   glFlush();
+   SDL_GL_SwapBuffers();
++  BindOffscreen();
+   ShowGLErrors();
+ }
+ 
+@@ -159,6 +219,7 @@ void SDLGraphicsSystem::RedrawLastFrame() {
+   // copy of the screen to work with and we only snapshot the screen during
+   // DrawManual() mode.
+   if (screen_contents_texture_valid_) {
++    BindOffscreen();
+     // Redraw the screen
+     glBindTexture(GL_TEXTURE_2D, screen_contents_texture_);
+     glBegin(GL_QUADS);
+@@ -185,10 +246,12 @@ void SDLGraphicsSystem::RedrawLastFrame() {
+ 
+     DrawCursor();
+ 
++    PresentOffscreen();
+     glFlush();
+ 
+     // Swap the buffers
+     SDL_GL_SwapBuffers();
++    BindOffscreen();
+     ShowGLErrors();
+   }
+ }
+@@ -299,9 +362,11 @@ void SDLGraphicsSystem::SetupVideo() {
+   SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+ 
+   // Set the video mode
+-  if ((screen_ = SDL_SetVideoMode(
+-           screen_size().width(), screen_size().height(), bpp, video_flags)) ==
+-      0) {
++  int out_w = 0, out_h = 0;
++  GetOutputSize(&out_w, &out_h);
++  int win_w = out_w > 0 ? out_w : screen_size().width();
++  int win_h = out_w > 0 ? out_h : screen_size().height();
++  if ((screen_ = SDL_SetVideoMode(win_w, win_h, bpp, video_flags)) == 0) {
+     // This could happen for a variety of reasons,
+     // including DISPLAY not being set, the specified
+     // resolution not being available, etc.
+@@ -376,6 +441,43 @@ void SDLGraphicsSystem::SetupVideo() {
+                GL_UNSIGNED_BYTE,
+                NULL);
+ 
++  // Offscreen game-sized buffer when the window is smaller than the game.
++  g_present_fbo = 0;
++  g_present_tex = 0;
++  if (out_w > 0 && out_h > 0 && glGenFramebuffersEXT != NULL) {
++    g_out_w = out_w;
++    g_out_h = out_h;
++    g_game_w = screen_size().width();
++    g_game_h = screen_size().height();
++    glGenTextures(1, &g_present_tex);
++    glBindTexture(GL_TEXTURE_2D, g_present_tex);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, g_game_w, g_game_h, 0, GL_RGBA,
++                 GL_UNSIGNED_BYTE, NULL);
++    glGenFramebuffersEXT(1, &g_present_fbo);
++    glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, g_present_fbo);
++    glFramebufferTexture2DEXT(GL_FRAMEBUFFER_EXT, GL_COLOR_ATTACHMENT0_EXT,
++                              GL_TEXTURE_2D, g_present_tex, 0);
++    GLenum status = glCheckFramebufferStatusEXT(GL_FRAMEBUFFER_EXT);
++    if (status != GL_FRAMEBUFFER_COMPLETE_EXT) {
++      fprintf(stderr, "rlvm: offscreen buffer incomplete (0x%x); drawing "
++              "straight to the window\n", status);
++      glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, 0);
++      g_present_fbo = 0;
++    } else {
++      fprintf(stderr, "rlvm: offscreen %dx%d scaled to output %dx%d\n",
++              g_game_w, g_game_h, g_out_w, g_out_h);
++      BindOffscreen();
++      glClear(GL_COLOR_BUFFER_BIT);
++    }
++  } else if (out_w > 0) {
++    fprintf(stderr, "rlvm: RLVM_OUTPUT_SIZE set but framebuffer objects "
++            "unavailable\n");
++  }
++
+   ShowGLErrors();
+ }
+ 

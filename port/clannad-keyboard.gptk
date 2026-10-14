@@ -1,0 +1,13 @@
+# keyboard mode: no mouse. A=Enter (advance/confirm), B=Esc (menu), X=Space,
+# D-pad=arrows, L1/R1=Ctrl (skip read text)
+a = enter
+b = esc
+x = space
+y = esc
+start = esc
+up = up
+down = down
+left = left
+right = right
+l1 = ctrl
+r1 = ctrl
