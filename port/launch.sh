@@ -1,7 +1,7 @@
 #!/bin/bash
-# CLANNAD (Steam HD) via rlvm on ArkOS handhelds. Usage: launch.sh keyboard|mouse
+# CLANNAD (Steam HD) via rlvm on ArkOS handhelds. Usage: launch.sh mouse
 # Logs: clannad/run.log (summary), clannad/run-game.log (rlvm/SDL/gl4es output)
-MODE=${1:-keyboard}
+MODE=${1:-mouse}
 if [ -d "/opt/system/Tools/PortMaster/" ]; then controlfolder="/opt/system/Tools/PortMaster"
 elif [ -d "/PortMaster/" ]; then controlfolder="/PortMaster"
 else controlfolder="/roms/ports/PortMaster"; fi

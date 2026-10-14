@@ -32,7 +32,7 @@ index b63ef00..d67c4dd 100644
  
      // Handle this somehow.
 diff --git a/src/systems/sdl/sdl_graphics_system.cc b/src/systems/sdl/sdl_graphics_system.cc
-index 34818de..284e1fc 100644
+index 34818de..caf9ba1 100644
 --- a/src/systems/sdl/sdl_graphics_system.cc
 +++ b/src/systems/sdl/sdl_graphics_system.cc
 @@ -41,6 +41,7 @@
@@ -43,7 +43,7 @@ index 34818de..284e1fc 100644
  #include <set>
  #include <sstream>
  #include <string>
-@@ -82,7 +83,64 @@ void SDLGraphicsSystem::SetCursor(int cursor) {
+@@ -82,7 +83,72 @@ void SDLGraphicsSystem::SetCursor(int cursor) {
    SDL_ShowCursor(ShouldUseCustomCursor() ? SDL_DISABLE : SDL_ENABLE);
  }
  
@@ -78,10 +78,14 @@ index 34818de..284e1fc 100644
 +    return;
 +  glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, 0);
 +  glViewport(0, 0, g_out_w, g_out_h);
++  // Leave the game's matrices untouched: RedrawLastFrame() reuses the ones
++  // from the last BeginFrame().
 +  glMatrixMode(GL_PROJECTION);
++  glPushMatrix();
 +  glLoadIdentity();
 +  glOrtho(0.0, 1.0, 0.0, 1.0, -1.0, 1.0);
 +  glMatrixMode(GL_MODELVIEW);
++  glPushMatrix();
 +  glLoadIdentity();
 +  glDisable(GL_BLEND);
 +  glDisable(GL_DEPTH_TEST);
@@ -99,6 +103,10 @@ index 34818de..284e1fc 100644
 +  glVertex2f(0, 1);
 +  glEnd();
 +  glEnable(GL_BLEND);
++  glPopMatrix();  // MODELVIEW
++  glMatrixMode(GL_PROJECTION);
++  glPopMatrix();
++  glMatrixMode(GL_MODELVIEW);
 +}
 +
 +}  // namespace
@@ -108,7 +116,7 @@ index 34818de..284e1fc 100644
    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
    DebugShowGLErrors();
-@@ -148,8 +206,10 @@ void SDLGraphicsSystem::EndFrame() {
+@@ -148,8 +214,10 @@ void SDLGraphicsSystem::EndFrame() {
    DrawCursor();
  
    // Swap the buffers
@@ -119,7 +127,7 @@ index 34818de..284e1fc 100644
    ShowGLErrors();
  }
  
-@@ -159,6 +219,7 @@ void SDLGraphicsSystem::RedrawLastFrame() {
+@@ -159,6 +227,7 @@ void SDLGraphicsSystem::RedrawLastFrame() {
    // copy of the screen to work with and we only snapshot the screen during
    // DrawManual() mode.
    if (screen_contents_texture_valid_) {
@@ -127,7 +135,7 @@ index 34818de..284e1fc 100644
      // Redraw the screen
      glBindTexture(GL_TEXTURE_2D, screen_contents_texture_);
      glBegin(GL_QUADS);
-@@ -185,10 +246,12 @@ void SDLGraphicsSystem::RedrawLastFrame() {
+@@ -185,10 +254,12 @@ void SDLGraphicsSystem::RedrawLastFrame() {
  
      DrawCursor();
  
@@ -140,7 +148,7 @@ index 34818de..284e1fc 100644
      ShowGLErrors();
    }
  }
-@@ -299,9 +362,11 @@ void SDLGraphicsSystem::SetupVideo() {
+@@ -299,9 +370,11 @@ void SDLGraphicsSystem::SetupVideo() {
    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
  
    // Set the video mode
@@ -155,7 +163,7 @@ index 34818de..284e1fc 100644
      // This could happen for a variety of reasons,
      // including DISPLAY not being set, the specified
      // resolution not being available, etc.
-@@ -376,6 +441,43 @@ void SDLGraphicsSystem::SetupVideo() {
+@@ -376,6 +449,43 @@ void SDLGraphicsSystem::SetupVideo() {
                 GL_UNSIGNED_BYTE,
                 NULL);
  
