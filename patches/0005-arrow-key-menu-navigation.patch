@@ -1,0 +1,381 @@
+diff --git a/src/long_operations/button_object_select_long_operation.cc b/src/long_operations/button_object_select_long_operation.cc
+index 500095a..eeb3b16 100644
+--- a/src/long_operations/button_object_select_long_operation.cc
++++ b/src/long_operations/button_object_select_long_operation.cc
+@@ -24,9 +24,12 @@
+ // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+ // -----------------------------------------------------------------------
+ 
++#include <cstdio>
+ #include "long_operations/button_object_select_long_operation.h"
+ 
++#include "long_operations/keyboard_nav.h"
+ #include "machine/rlmachine.h"
++#include "systems/base/event_system.h"
+ #include "systems/base/graphics_object.h"
+ #include "systems/base/graphics_system.h"
+ #include "systems/base/parent_graphics_object_data.h"
+@@ -132,6 +135,34 @@ bool ButtonObjectSelectLongOperation::MouseButtonStateChanged(
+   return false;
+ }
+ 
++bool ButtonObjectSelectLongOperation::KeyStateChanged(KeyCode key_code,
++                                                      bool pressed) {
++  if (!pressed)
++    return false;
++
++  if (key_code == RLKEY_RETURN) {
++    // Confirm the highlighted button.
++    MouseButtonStateChanged(MOUSE_LEFT, true);
++    MouseButtonStateChanged(MOUSE_LEFT, false);
++    return true;
++  }
++
++  std::vector<Rect> rects;
++  for (ButtonPair& button_pair : buttons_) {
++    if (button_pair.first->has_object_data()) {
++      GraphicsObjectData* data = &button_pair.first->GetObjectData();
++      rects.push_back(data->DstRect(*button_pair.first, button_pair.second));
++    }
++  }
++
++  EventSystem& es = machine_.system().event();
++  Point target;
++  if (!PickMenuTarget(key_code, rects, es.GetCursorPos(), &target))
++    return false;
++  es.InjectMouseMovement(machine_, target);
++  return true;
++}
++
+ bool ButtonObjectSelectLongOperation::operator()(RLMachine& machine) {
+   if (has_return_value_) {
+     machine.set_store_register(return_value_);
+diff --git a/src/long_operations/button_object_select_long_operation.h b/src/long_operations/button_object_select_long_operation.h
+index 0ca7b8b..a09bcf1 100644
+--- a/src/long_operations/button_object_select_long_operation.h
++++ b/src/long_operations/button_object_select_long_operation.h
+@@ -49,6 +49,7 @@ class ButtonObjectSelectLongOperation : public LongOperation {
+   virtual void MouseMotion(const Point& point) override;
+   virtual bool MouseButtonStateChanged(MouseButton mouseButton,
+                                        bool pressed) override;
++  virtual bool KeyStateChanged(KeyCode key_code, bool pressed) override;
+ 
+   // Overridden from LongOperation:
+   virtual bool operator()(RLMachine& machine);
+diff --git a/src/long_operations/keyboard_nav.h b/src/long_operations/keyboard_nav.h
+new file mode 100644
+index 0000000..5542e20
+--- /dev/null
++++ b/src/long_operations/keyboard_nav.h
+@@ -0,0 +1,52 @@
++// Arrow-key navigation for pointer-driven menus, for devices without a mouse
++// (handhelds). Up/Left pick the previous button and Down/Right the next one,
++// in reading order; the pointer is then moved onto it.
++#ifndef SRC_LONG_OPERATIONS_KEYBOARD_NAV_H_
++#define SRC_LONG_OPERATIONS_KEYBOARD_NAV_H_
++
++#include <algorithm>
++#include <vector>
++
++#include "systems/base/event_listener.h"
++#include "systems/base/rect.h"
++
++// Returns true, and sets |*target| to the centre of the button to move to, if
++// |key| is an arrow key and there is at least one button.
++inline bool PickMenuTarget(KeyCode key,
++                           std::vector<Rect> rects,
++                           const Point& cursor,
++                           Point* target) {
++  int dir;
++  switch (key) {
++    case RLKEY_DOWN:
++    case RLKEY_RIGHT:
++      dir = 1;
++      break;
++    case RLKEY_UP:
++    case RLKEY_LEFT:
++      dir = -1;
++      break;
++    default:
++      return false;
++  }
++  if (rects.empty())
++    return false;
++
++  std::sort(rects.begin(), rects.end(), [](const Rect& a, const Rect& b) {
++    return a.y() != b.y() ? a.y() < b.y() : a.x() < b.x();
++  });
++  int n = static_cast<int>(rects.size());
++  int current = -1;
++  for (int i = 0; i < n; ++i) {
++    if (rects[i].Contains(cursor)) {
++      current = i;
++      break;
++    }
++  }
++  int next = current < 0 ? (dir > 0 ? 0 : n - 1) : (current + dir + n) % n;
++  const Rect& r = rects[next];
++  *target = Point(r.x() + r.width() / 2, r.y() + r.height() / 2);
++  return true;
++}
++
++#endif  // SRC_LONG_OPERATIONS_KEYBOARD_NAV_H_
+diff --git a/src/long_operations/select_long_operation.cc b/src/long_operations/select_long_operation.cc
+index bf399a8..1c749aa 100644
+--- a/src/long_operations/select_long_operation.cc
++++ b/src/long_operations/select_long_operation.cc
+@@ -24,6 +24,7 @@
+ // Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
+ // -----------------------------------------------------------------------
+ 
++#include <cstdio>
+ #include "long_operations/select_long_operation.h"
+ 
+ #include <iostream>
+@@ -31,6 +32,7 @@
+ #include <string>
+ #include <vector>
+ 
++#include "long_operations/keyboard_nav.h"
+ #include "machine/long_operation.h"
+ #include "machine/rlmachine.h"
+ #include "systems/base/event_listener.h"
+@@ -230,6 +232,26 @@ bool NormalSelectLongOperation::MouseButtonStateChanged(MouseButton mouseButton,
+   return false;
+ }
+ 
++bool NormalSelectLongOperation::KeyStateChanged(KeyCode key_code,
++                                                bool pressed) {
++  if (!pressed)
++    return false;
++
++  EventSystem& es = machine_.system().event();
++  if (key_code == RLKEY_RETURN) {
++    MouseButtonStateChanged(MOUSE_LEFT, true);
++    MouseButtonStateChanged(MOUSE_LEFT, false);
++    return true;
++  }
++
++  Point target;
++  if (!PickMenuTarget(
++          key_code, text_window_->SelectionRects(), es.GetCursorPos(), &target))
++    return false;
++  es.InjectMouseMovement(machine_, target);
++  return true;
++}
++
+ // -----------------------------------------------------------------------
+ // ButtonSelectLongOperation
+ // -----------------------------------------------------------------------
+@@ -436,6 +458,30 @@ bool ButtonSelectLongOperation::MouseButtonStateChanged(MouseButton mouseButton,
+   return false;
+ }
+ 
++bool ButtonSelectLongOperation::KeyStateChanged(KeyCode key_code,
++                                                bool pressed) {
++  if (!pressed)
++    return false;
++
++  EventSystem& es = machine_.system().event();
++  if (key_code == RLKEY_RETURN) {
++    MouseButtonStateChanged(MOUSE_LEFT, true);
++    MouseButtonStateChanged(MOUSE_LEFT, false);
++    return true;
++  }
++
++  std::vector<Rect> rects;
++  for (size_t i = 0; i < buttons_.size(); i++) {
++    if (options_[i].enabled)
++      rects.push_back(buttons_[i].bounding_rect);
++  }
++  Point target;
++  if (!PickMenuTarget(key_code, rects, es.GetCursorPos(), &target))
++    return false;
++  es.InjectMouseMovement(machine_, target);
++  return true;
++}
++
+ void ButtonSelectLongOperation::Render(std::ostream* tree) {
+   for (size_t i = 0; i < buttons_.size(); i++) {
+     int frame = normal_frame_;
+diff --git a/src/long_operations/select_long_operation.h b/src/long_operations/select_long_operation.h
+index 49b8294..c03269d 100644
+--- a/src/long_operations/select_long_operation.h
++++ b/src/long_operations/select_long_operation.h
+@@ -105,6 +105,7 @@ class NormalSelectLongOperation : public SelectLongOperation {
+   // Overridden from EventListener:
+   virtual void MouseMotion(const Point&) override;
+   virtual bool MouseButtonStateChanged(MouseButton mouseButton, bool pressed) override;
++  virtual bool KeyStateChanged(KeyCode key_code, bool pressed) override;
+ 
+  private:
+   std::shared_ptr<TextWindow> text_window_;
+@@ -127,6 +128,7 @@ class ButtonSelectLongOperation : public SelectLongOperation,
+   virtual void MouseMotion(const Point&) override;
+   virtual bool MouseButtonStateChanged(MouseButton mouseButton,
+                                        bool pressed) override;
++  virtual bool KeyStateChanged(KeyCode key_code, bool pressed) override;
+ 
+   // Overridden from Renderable:
+   virtual void Render(std::ostream* tree) override;
+diff --git a/src/long_operations/wait_long_operation.cc b/src/long_operations/wait_long_operation.cc
+index 8c884e4..54bf141 100644
+--- a/src/long_operations/wait_long_operation.cc
++++ b/src/long_operations/wait_long_operation.cc
+@@ -26,10 +26,17 @@
+ 
+ #include "long_operations/wait_long_operation.h"
+ 
++#include <map>
++#include <utility>
++#include <vector>
++
++#include "long_operations/keyboard_nav.h"
+ #include "machine/rlmachine.h"
+ #include "systems/base/event_listener.h"
+ #include "systems/base/event_system.h"
++#include "systems/base/graphics_object.h"
+ #include "systems/base/graphics_system.h"
++#include "systems/base/parent_graphics_object_data.h"
+ #include "systems/base/rect.h"
+ #include "systems/base/system.h"
+ #include "systems/base/text_system.h"
+@@ -93,6 +100,58 @@ bool WaitLongOperation::MouseButtonStateChanged(MouseButton mouseButton,
+   return false;
+ }
+ 
++namespace {
++
++// On-screen areas of all visible button graphics objects (title/menu buttons
++// that the game script hit-tests against the pointer itself).
++std::vector<Rect> VisibleButtonRects(RLMachine& machine) {
++  std::vector<Rect> rects;
++  GraphicsSystem& graphics = machine.system().graphics();
++  for (GraphicsObject& obj : graphics.GetForegroundObjects()) {
++    if (obj.IsButton() && obj.visible() && obj.has_object_data()) {
++      rects.push_back(obj.GetObjectData().DstRect(obj, NULL));
++    } else if (obj.has_object_data()) {
++      ParentGraphicsObjectData* parent =
++          dynamic_cast<ParentGraphicsObjectData*>(&obj.GetObjectData());
++      if (parent) {
++        for (GraphicsObject& child : parent->objects()) {
++          if (child.IsButton() && child.visible() && child.has_object_data())
++            rects.push_back(child.GetObjectData().DstRect(child, &obj));
++        }
++      }
++    }
++  }
++
++  if (rects.empty()) {
++    // Many menus (e.g. the title screen) are plain objects that the game
++    // script hit-tests itself. Treat the largest group of three or more
++    // visible, identically sized, smallish objects as the menu entries.
++    Size screen = graphics.screen_size();
++    std::map<std::pair<int, int>, std::vector<Rect>> groups;
++    for (GraphicsObject& obj : graphics.GetForegroundObjects()) {
++      if (!obj.visible() || !obj.has_object_data())
++        continue;
++      Rect r = obj.GetObjectData().DstRect(obj, NULL);
++      if (r.width() <= 0 || r.height() <= 0 || r.x() < 0 || r.y() < 0 ||
++          r.x2() > screen.width() || r.y2() > screen.height())
++        continue;
++      if (r.width() * r.height() > screen.width() * screen.height() / 8)
++        continue;
++      groups[std::make_pair(r.width(), r.height())].push_back(r);
++    }
++    size_t best = 0;
++    for (const auto& group : groups) {
++      if (group.second.size() >= 3 && group.second.size() > best) {
++        best = group.second.size();
++        rects = group.second;
++      }
++    }
++  }
++  return rects;
++}
++
++}  // namespace
++
+ bool WaitLongOperation::KeyStateChanged(KeyCode keyCode, bool pressed) {
+   if (pressed && break_on_ctrl_pressed_ &&
+       (keyCode == RLKEY_RCTRL || keyCode == RLKEY_LCTRL)) {
+@@ -100,6 +159,18 @@ bool WaitLongOperation::KeyStateChanged(KeyCode keyCode, bool pressed) {
+     return true;
+   }
+ 
++  // Arrow keys move the pointer between on-screen buttons, for devices
++  // without a mouse.
++  if (pressed) {
++    EventSystem& es = machine_.system().event();
++    Point target;
++    if (PickMenuTarget(
++            keyCode, VisibleButtonRects(machine_), es.GetCursorPos(), &target)) {
++      es.InjectMouseMovement(machine_, target);
++      return true;
++    }
++  }
++
+   return false;
+ }
+ 
+diff --git a/src/systems/base/selection_element.cc b/src/systems/base/selection_element.cc
+index 6ecaa89..4a169c5 100644
+--- a/src/systems/base/selection_element.cc
++++ b/src/systems/base/selection_element.cc
+@@ -59,6 +59,10 @@ void SelectionElement::SetSelectionCallback(
+   selection_callback_ = func;
+ }
+ 
++Rect SelectionElement::bounding_rect() const {
++  return Rect(pos_, normal_image_->GetSize());
++}
++
+ bool SelectionElement::IsHighlighted(const Point& p) {
+   return Rect(pos_, normal_image_->GetSize()).Contains(p);
+ }
+diff --git a/src/systems/base/selection_element.h b/src/systems/base/selection_element.h
+index b1e7d61..ddfd64d 100644
+--- a/src/systems/base/selection_element.h
++++ b/src/systems/base/selection_element.h
+@@ -52,6 +52,9 @@ class SelectionElement {
+   void SetMousePosition(const Point& pos);
+   bool HandleMouseClick(const Point& pos, bool pressed);
+ 
++  // The on-screen area of this choice.
++  Rect bounding_rect() const;
++
+   void Render();
+ 
+  private:
+diff --git a/src/systems/base/text_window.cc b/src/systems/base/text_window.cc
+index 454c109..f0d7657 100644
+--- a/src/systems/base/text_window.cc
++++ b/src/systems/base/text_window.cc
+@@ -718,6 +718,13 @@ void TextWindow::SetRGBAF(const vector<int>& attr) {
+   set_filter(attr.at(4));
+ }
+ 
++std::vector<Rect> TextWindow::SelectionRects() const {
++  std::vector<Rect> rects;
++  for (const auto& selection : selections_)
++    rects.push_back(selection->bounding_rect());
++  return rects;
++}
++
+ void TextWindow::SetMousePosition(const Point& pos) {
+   if (in_selection_mode()) {
+     for_each(selections_.begin(),
+diff --git a/src/systems/base/text_window.h b/src/systems/base/text_window.h
+index c28568a..6112151 100644
+--- a/src/systems/base/text_window.h
++++ b/src/systems/base/text_window.h
+@@ -133,6 +133,9 @@ class TextWindow {
+                         const Point& pos,
+                         bool pressed);
+ 
++  // On-screen areas of the current selection choices (for keyboard nav).
++  std::vector<Rect> SelectionRects() const;
++
+   // Sets how the name is displayed
+   void set_name_mod(const int in) { name_mod_ = in; }
+   int name_mod() const { return name_mod_; }

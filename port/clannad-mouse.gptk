@@ -1,15 +1,16 @@
-# mouse mode: left stick OR D-pad moves the pointer.
-# A=click, B=right click (menu), X=Enter, Y/Start=Esc, L1/R1=Ctrl (skip),
-# hold L2 for slow, precise pointer movement.
+# Left stick moves the pointer. D-pad = arrow keys: in menus and choice lists
+# it jumps between the buttons (then A clicks); while reading, Up/Down scroll
+# the backlog. A=click, B=right click (menu), X=Enter, Y/Start=Esc,
+# L1/R1=Ctrl (skip), hold L2 for slow, precise pointer movement.
 a = mouse_left
 b = mouse_right
 x = enter
 y = esc
 start = esc
-up = mouse_movement_up
-down = mouse_movement_down
-left = mouse_movement_left
-right = mouse_movement_right
+up = up
+down = down
+left = left
+right = right
 left_analog_up = mouse_movement_up
 left_analog_down = mouse_movement_down
 left_analog_left = mouse_movement_left
